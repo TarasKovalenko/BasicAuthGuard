@@ -4,6 +4,7 @@
         <TargetFramework>net10.0</TargetFramework>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
+        <RootNamespace>AspNetCore.BasicAuthentication.Example</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup>
@@ -11,7 +12,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\AspNetCore.BasicAuthentication\AspNetCore.BasicAuthentication.csproj" />
+      <ProjectReference Include="..\BasicAuthGuard\BasicAuthGuard.csproj" />
     </ItemGroup>
 
 </Project>

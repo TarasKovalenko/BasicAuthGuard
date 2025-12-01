@@ -80,16 +80,14 @@ public class PasswordHasher : IPasswordHasher
 
     private static string HashBCrypt(string password)
     {
-        // Using a simple PBKDF2-based implementation as BCrypt alternative
-        // In production, consider using BCrypt.Net-Next package
-        using var deriveBytes = new Rfc2898DeriveBytes(
+        // Using PBKDF2-based implementation
+        var salt = RandomNumberGenerator.GetBytes(16);
+        var hash = Rfc2898DeriveBytes.Pbkdf2(
             password,
-            saltSize: 16,
+            salt,
             iterations: 100000,
-            HashAlgorithmName.SHA256);
-
-        var salt = deriveBytes.Salt;
-        var hash = deriveBytes.GetBytes(32);
+            HashAlgorithmName.SHA256,
+            outputLength: 32);
 
         var result = new byte[48];
         Buffer.BlockCopy(salt, 0, result, 0, 16);
@@ -108,20 +106,17 @@ public class PasswordHasher : IPasswordHasher
                 return false;
             }
 
-            var salt = new byte[16];
-            Buffer.BlockCopy(hashBytes, 0, salt, 0, 16);
+            var salt = hashBytes[..16];
+            var storedHash = hashBytes[16..];
 
-            using var deriveBytes = new Rfc2898DeriveBytes(
+            var computedHash = Rfc2898DeriveBytes.Pbkdf2(
                 password,
                 salt,
                 iterations: 100000,
-                HashAlgorithmName.SHA256);
+                HashAlgorithmName.SHA256,
+                outputLength: 32);
 
-            var computedHash = deriveBytes.GetBytes(32);
-
-            return CryptographicOperations.FixedTimeEquals(
-                computedHash,
-                hashBytes.AsSpan(16, 32));
+            return CryptographicOperations.FixedTimeEquals(computedHash, storedHash);
         }
         catch
         {

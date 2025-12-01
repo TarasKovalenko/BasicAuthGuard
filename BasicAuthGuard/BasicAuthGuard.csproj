@@ -16,6 +16,7 @@
         <PackageOutputPath>./nupkg</PackageOutputPath>
         <Deterministic>true</Deterministic>
         <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+        <RootNamespace>AspNetCore.BasicAuthentication</RootNamespace>
     </PropertyGroup>
     <PropertyGroup>
         <PackageId>BasicAuthGuard</PackageId>

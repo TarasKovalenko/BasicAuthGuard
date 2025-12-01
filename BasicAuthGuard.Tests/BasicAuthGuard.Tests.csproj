@@ -5,6 +5,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
+        <RootNamespace>AspNetCore.BasicAuthentication.Tests</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
@@ -32,7 +33,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\AspNetCore.BasicAuthentication\AspNetCore.BasicAuthentication.csproj" />
+      <ProjectReference Include="..\BasicAuthGuard\BasicAuthGuard.csproj" />
     </ItemGroup>
 
 </Project>

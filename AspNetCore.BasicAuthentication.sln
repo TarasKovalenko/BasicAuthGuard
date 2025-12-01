@@ -1,16 +1,16 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCore.BasicAuthentication", "AspNetCore.BasicAuthentication\AspNetCore.BasicAuthentication.csproj", "{B3D1F01F-FA2B-4401-9D6C-CED165E530CE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BasicAuthGuard", "BasicAuthGuard\BasicAuthGuard.csproj", "{B3D1F01F-FA2B-4401-9D6C-CED165E530CE}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{B19F521F-171F-4DF9-9EBB-7EA6D32D21F5}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{B10803DB-008D-43FB-A8CF-716819C0E577}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCore.BasicAuthentication.Tests", "AspNetCore.BasicAuthentication.Tests\AspNetCore.BasicAuthentication.Tests.csproj", "{699A8E71-0615-4285-8C55-BA4F1EB4CC43}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BasicAuthGuard.Tests", "BasicAuthGuard.Tests\BasicAuthGuard.Tests.csproj", "{699A8E71-0615-4285-8C55-BA4F1EB4CC43}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{7034F9DA-9A82-4830-B6BB-A6F35A49BA31}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCore.BasicAuthentication.Example", "AspNetCore.BasicAuthentication.Example\AspNetCore.BasicAuthentication.Example.csproj", "{26868979-C957-4C18-8616-82DBEEE1AE09}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BasicAuthGuard.Example", "BasicAuthGuard.Example\BasicAuthGuard.Example.csproj", "{26868979-C957-4C18-8616-82DBEEE1AE09}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

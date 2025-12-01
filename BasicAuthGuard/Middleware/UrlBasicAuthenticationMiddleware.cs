@@ -2,7 +2,6 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using System.Text.RegularExpressions;
-using AspNetCore.BasicAuthentication.Options;
 using Microsoft.AspNetCore.Http;
 
 namespace AspNetCore.BasicAuthentication.Middleware;

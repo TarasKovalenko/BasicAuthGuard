@@ -28,10 +28,10 @@ public class AuditLogger : IAuditLogger
     private readonly AuditLogOptions _options;
 
     private const string DefaultSuccessTemplate =
-        "[AspNetCore.BasicAuthentication] Authentication succeeded for user '{Username}' from {IpAddress} on {Path}";
+        "[BasicAuthGuard] Authentication succeeded for user '{Username}' from {IpAddress} on {Path}";
 
     private const string DefaultFailureTemplate =
-        "[AspNetCore.BasicAuthentication] Authentication failed for user '{Username}' from {IpAddress} on {Path}. Reason: {Reason}";
+        "[BasicAuthGuard] Authentication failed for user '{Username}' from {IpAddress} on {Path}. Reason: {Reason}";
 
     /// <summary>
     /// Creates a new instance

@@ -1,5 +1,4 @@
 using AspNetCore.BasicAuthentication.Middleware;
-using AspNetCore.BasicAuthentication.Options;
 using Microsoft.AspNetCore.Builder;
 
 namespace AspNetCore.BasicAuthentication.Extensions;
