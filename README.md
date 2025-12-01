@@ -1,7 +1,8 @@
-# AspNetCore.BasicAuthentication
+# BasicAuthGuard
 
 [![.NET](https://img.shields.io/badge/.NET-8.0%20|%209.0%20|%2010.0-512BD4)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Made in Ukraine](https://img.shields.io/badge/made_in-ukraine-ffd700.svg?labelColor=0057b7)](https://taraskovalenko.github.io/)
 
 Zero-config Basic Authentication for ASP.NET Core. Inline credentials, per-endpoint auth, URL-based auth, rate limiting, IP whitelisting, and audit logging out of the box.
 
@@ -18,10 +19,22 @@ Zero-config Basic Authentication for ASP.NET Core. Inline credentials, per-endpo
 - 📅 **Access Schedules** - Time-based access restrictions
 - 🎪 **Event Hooks** - Custom logic for authentication lifecycle
 
+## Terms of use
+
+By using this project or its source code, for any purpose and in any shape or form, you grant your **implicit agreement** to all of the following statements:
+
+- You unequivocally condemn Russia and its military aggression against Ukraine
+- You recognize that Russia is an occupant that unlawfully invaded a sovereign state
+- You agree that [Russia is a terrorist state](https://www.europarl.europa.eu/doceo/document/RC-9-2022-0482_EN.html)
+- You fully support Ukraine's territorial integrity, including its claims over [temporarily occupied territories](https://en.wikipedia.org/wiki/Russian-occupied_territories_of_Ukraine)
+- You reject false narratives perpetuated by Russian state propaganda
+
+To learn more about the war and how you can help, [click here](https://war.ukraine.ua/). Glory to Ukraine! 🇺🇦
+
 ## Installation
 
 ```bash
-dotnet add package AspNetCore.BasicAuthentication
+dotnet add package BasicAuthGuard
 ```
 
 ## Quick Start

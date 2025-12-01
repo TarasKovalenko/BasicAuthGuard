@@ -7,6 +7,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi();
 builder.Services.AddBasicAuthGuard(options =>
 {
+    options.Username = "admin";
+    options.Password = "admin";
+    options.Realm = "Default Realm";
     options.WithAuditLog(audit =>
     {
         audit.Enabled = true;
@@ -14,6 +17,7 @@ builder.Services.AddBasicAuthGuard(options =>
         audit.IncludeUserAgent = true;
     });
 });
+builder.Services.AddBasicAuthGuardPolicy();
 
 var app = builder.Build();
 
@@ -65,7 +69,7 @@ app.MapGet("/weatherforecast", () =>
             .ToArray();
         return forecast;
     })
-    .RequireBasicAuth("admin", "admin")
+    .RequireBasicAuth()
     .WithName("GetWeatherForecast");
 
 app.Run();
