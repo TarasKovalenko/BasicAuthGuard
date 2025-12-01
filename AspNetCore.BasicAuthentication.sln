@@ -8,6 +8,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{B10803DB
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCore.BasicAuthentication.Tests", "AspNetCore.BasicAuthentication.Tests\AspNetCore.BasicAuthentication.Tests.csproj", "{699A8E71-0615-4285-8C55-BA4F1EB4CC43}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{7034F9DA-9A82-4830-B6BB-A6F35A49BA31}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCore.BasicAuthentication.Example", "AspNetCore.BasicAuthentication.Example\AspNetCore.BasicAuthentication.Example.csproj", "{26868979-C957-4C18-8616-82DBEEE1AE09}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -22,9 +26,14 @@ Global
 		{699A8E71-0615-4285-8C55-BA4F1EB4CC43}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{699A8E71-0615-4285-8C55-BA4F1EB4CC43}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{699A8E71-0615-4285-8C55-BA4F1EB4CC43}.Release|Any CPU.Build.0 = Release|Any CPU
+		{26868979-C957-4C18-8616-82DBEEE1AE09}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{26868979-C957-4C18-8616-82DBEEE1AE09}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{26868979-C957-4C18-8616-82DBEEE1AE09}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{26868979-C957-4C18-8616-82DBEEE1AE09}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B3D1F01F-FA2B-4401-9D6C-CED165E530CE} = {B19F521F-171F-4DF9-9EBB-7EA6D32D21F5}
 		{699A8E71-0615-4285-8C55-BA4F1EB4CC43} = {B10803DB-008D-43FB-A8CF-716819C0E577}
+		{26868979-C957-4C18-8616-82DBEEE1AE09} = {7034F9DA-9A82-4830-B6BB-A6F35A49BA31}
 	EndGlobalSection
 EndGlobal

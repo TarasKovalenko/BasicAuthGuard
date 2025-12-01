@@ -136,7 +136,7 @@ internal class BasicAuthEndpointFilter : IEndpointFilter
         {
             isValid = await _options.ValidateCredentialsAsync(username, password, httpContext);
         }
-        else if (_options.Username != null && _options.Password != null)
+        else if (_options is { Username: not null, Password: not null })
         {
             isValid = string.Equals(_options.Username, username, StringComparison.Ordinal) &&
                       string.Equals(_options.Password, password, StringComparison.Ordinal);
