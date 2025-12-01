@@ -22,7 +22,7 @@
         <PackageId>BasicAuthGuard</PackageId>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <Description>Zero-config Basic Authentication for ASP.NET Core. Inline credentials, per-endpoint auth, URL-based auth, rate limiting, IP whitelisting, and audit logging out of the box.</Description>
-        <Version>1.0.0</Version>
+        <Version>1.0.1</Version>
         <Authors>Taras Kovalenko</Authors>
         <Copyright>Copyright Taras Kovalenko</Copyright>
         <PackageTags>aspnetcore;authentication;basic-authentication;basic-auth;authorization;security;middleware;dotnet;csharp;rate-limiting;ip-whitelist;audit-logging;password-hashing;endpoint-security;api-security;http-authentication;web-api</PackageTags>
