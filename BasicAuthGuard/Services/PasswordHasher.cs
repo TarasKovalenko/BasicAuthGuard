@@ -90,8 +90,8 @@ public class PasswordHasher : IPasswordHasher
             outputLength: 32);
 
         var result = new byte[48];
-        Buffer.BlockCopy(salt, 0, result, 0, 16);
-        Buffer.BlockCopy(hash, 0, result, 16, 32);
+        salt.AsSpan().CopyTo(result.AsSpan()[..16]);
+        hash.AsSpan().CopyTo(result.AsSpan()[16..]);
 
         return Convert.ToBase64String(result);
     }

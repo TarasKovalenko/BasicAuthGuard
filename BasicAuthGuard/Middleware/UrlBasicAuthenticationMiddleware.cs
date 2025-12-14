@@ -130,12 +130,12 @@ public class UrlBasicAuthenticationMiddleware
         await _next(context);
     }
 
-    private static Task CreateUnauthorizedResponse(HttpContext context, UrlBasicAuthenticationOptions options)
+    private static async Task CreateUnauthorizedResponse(HttpContext context, UrlBasicAuthenticationOptions options)
     {
         var realm = options.Realm ?? BasicAuthenticationDefaults.Realm;
         context.Response.Headers.WWWAuthenticate = $"""Basic realm="{realm}", charset="UTF-8" """;
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        return Task.CompletedTask;
+        await context.Response.CompleteAsync();
     }
 }
 
