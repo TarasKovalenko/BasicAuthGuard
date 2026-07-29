@@ -113,6 +113,7 @@ app.MapGet("/metrics", () => GetMetrics());
 - [Rate Limiting](#rate-limiting)
 - [IP Whitelisting](#ip-whitelisting)
 - [Audit Logging](#audit-logging)
+- [Remember Me](#remember-me)
 - [Access Schedules](#access-schedules)
 - [Custom Validation](#custom-validation)
 - [Events](#events)
@@ -490,6 +491,79 @@ builder.Services.AddBasicAuthGuard(options =>
 | `FailureMessageTemplate` | `string?` | `null` | Custom failure message |
 
 **Available Placeholders:** `{Username}`, `{IpAddress}`, `{UserAgent}`, `{Path}`, `{Scheme}`, `{Reason}`
+
+---
+
+## Remember Me
+
+The browser's native Basic-auth dialog is browser chrome — a server cannot add a
+"remember me" checkbox to it, and browsers forget Basic credentials when they close.
+
+`WithRememberMe` closes that gap: after a successful authentication, BasicAuthGuard
+issues an encrypted, HttpOnly cookie. Later requests that carry no `Authorization`
+header authenticate from that cookie, so the dialog does not come back until the
+cookie expires.
+
+```csharp
+builder.Services.AddBasicAuthGuard(options =>
+{
+    options.Username = "admin";
+    options.Password = "password123";
+
+    options.WithRememberMe(remember =>
+    {
+        remember.Duration = TimeSpan.FromDays(30);   // default: 14 days, max: 365
+        remember.SlidingExpiration = true;           // default: false
+        remember.CookieName = ".BasicAuthGuard.Remember";
+        remember.SameSite = SameSiteMode.Lax;
+        remember.SecurePolicy = CookieSecurePolicy.Always;
+    });
+});
+```
+
+Behaviour:
+
+- The native dialog still appears the **first** time. The cookie is issued only after
+  those credentials are accepted.
+- An `Authorization` header always wins over the cookie, so a user can re-authenticate
+  or switch identity at any time.
+- Revalidating the cookie follows the same precedence as the initial login: if a
+  `ValidateCredentialsAsync` delegate or an `OnValidateCredentials` event is
+  configured, the password is not available on the cookie path, so the claims stored
+  in the cookie are trusted until it expires. Otherwise, when users are configured
+  through `AddUser`, every cookie-authenticated request re-checks the user: disabling
+  an account or falling outside an `AccessSchedule` rejects the cookie immediately and
+  clears it, and roles and claims are rebuilt from the current configuration.
+  Otherwise, the single configured `Username` must still match.
+- The cookie is always `HttpOnly` and is `Secure` by default. It is encrypted and
+  signed with ASP.NET Core Data Protection, and the expiry is enforced server-side.
+
+### Signing out
+
+```csharp
+app.MapGet("/logout", async (HttpContext context) =>
+{
+    await context.SignOutAsync(BasicAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok("Signed out");
+});
+```
+
+This clears the cookie. The browser may still hold cached Basic credentials for the
+current session — that part is browser-controlled and closing the browser clears it.
+
+### Persist your Data Protection keys
+
+The cookie is encrypted with the app's Data Protection keyring. On a single machine
+with default settings this just works. **If you run multiple instances, containers, or
+anything with an ephemeral filesystem, persist and share the keyring** — otherwise
+every restart or scale-out invalidates all remember-me cookies and users get prompted
+again:
+
+```csharp
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo("/var/keys"))
+    .SetApplicationName("MyApp");
+```
 
 ---
 

@@ -1,4 +1,6 @@
+using AspNetCore.BasicAuthentication;
 using AspNetCore.BasicAuthentication.Extensions;
+using Microsoft.AspNetCore.Authentication;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +17,11 @@ builder.Services.AddBasicAuthGuard(options =>
         audit.Enabled = true;
         audit.IncludeIpAddress = true;
         audit.IncludeUserAgent = true;
+    });
+    options.WithRememberMe(remember =>
+    {
+        remember.Duration = TimeSpan.FromDays(30);
+        remember.SlidingExpiration = true;
     });
 });
 builder.Services.AddBasicAuthGuardPolicy();
@@ -56,6 +63,12 @@ var summaries = new[]
 // Health endpoint (protected by URL-based auth above)
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }))
     .WithName("HealthCheck");
+
+app.MapGet("/logout", async (HttpContext context) =>
+{
+    await context.SignOutAsync(BasicAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok("Signed out - remember-me cookie cleared");
+});
 
 app.MapGet("/weatherforecast", () =>
     {
