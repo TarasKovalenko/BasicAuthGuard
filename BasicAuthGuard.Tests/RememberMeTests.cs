@@ -579,6 +579,27 @@ public class RememberMeTests
     /// </summary>
     private static string CookiePair(string setCookieHeader) => setCookieHeader.Split(';')[0];
 
+    [Fact]
+    public async Task SignOut_ShouldClearCookie()
+    {
+        // Arrange
+        using var host = await CreateHostWithLogout();
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("admin", "password123");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var response = await client.GetAsync("/logout");
+
+        // Assert
+        var setCookie = GetSetCookie(response, ".BasicAuthGuard.Remember");
+        setCookie.ShouldNotBeNull();
+        setCookie!.ShouldContain("expires=Thu, 01 Jan 1970", Case.Insensitive);
+    }
+
     private static async Task<IHost> CreateHost(Action<RememberMeOptions>? remember)
     {
         var host = new HostBuilder()
@@ -610,6 +631,48 @@ public class RememberMeTests
                     {
                         endpoints.MapGet("/secure", (HttpContext ctx) => ctx.User.Identity!.Name)
                             .RequireBasicAuth();
+                    });
+                });
+            })
+            .Build();
+
+        await host.StartAsync();
+        return host;
+    }
+
+    private static async Task<IHost> CreateHostWithLogout()
+    {
+        var host = new HostBuilder()
+            .ConfigureWebHost(webBuilder =>
+            {
+                webBuilder.UseTestServer();
+                webBuilder.ConfigureServices(services =>
+                {
+                    services.AddBasicAuthGuard(options =>
+                    {
+                        options.Username = "admin";
+                        options.Password = "password123";
+                        options.WithRememberMe(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+                    });
+                    services.AddBasicAuthGuardPolicy();
+                    services.AddAuthorization();
+                    services.AddRouting();
+                });
+                webBuilder.Configure(app =>
+                {
+                    app.UseRouting();
+                    app.UseAuthentication();
+                    app.UseAuthorization();
+                    app.UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapGet("/secure", (HttpContext ctx) => ctx.User.Identity!.Name)
+                            .RequireBasicAuth();
+
+                        endpoints.MapGet("/logout", async (HttpContext ctx) =>
+                        {
+                            await ctx.SignOutAsync(BasicAuthenticationDefaults.AuthenticationScheme);
+                            return "signed out";
+                        });
                     });
                 });
             })

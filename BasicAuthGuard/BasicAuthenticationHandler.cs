@@ -15,7 +15,7 @@ namespace AspNetCore.BasicAuthentication;
 /// <summary>
 /// Authentication handler for Basic authentication
 /// </summary>
-public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticationOptions>
+public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticationOptions>, IAuthenticationSignOutHandler
 {
     private readonly IPasswordHasher _passwordHasher;
     private readonly IRateLimiter? _rateLimiter;
@@ -217,6 +217,23 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         }
 
         Response.StatusCode = StatusCodes.Status403Forbidden;
+    }
+
+    /// <summary>
+    /// Clears the remember-me cookie. Basic authentication itself is stateless, so this
+    /// is the only server-side state a sign-out can remove.
+    /// </summary>
+    public Task SignOutAsync(AuthenticationProperties? properties)
+    {
+        DeleteRememberMeCookie();
+
+        var username = Context.User.Identity?.Name;
+        if (!string.IsNullOrEmpty(username))
+        {
+            _auditLogger.LogSuccess(Context, username, $"{Scheme.Name} (sign-out)");
+        }
+
+        return Task.CompletedTask;
     }
 
     private async Task<ValidationResult> ValidateCredentialsAsync(string username, string password)
