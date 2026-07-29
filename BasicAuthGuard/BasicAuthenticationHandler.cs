@@ -20,6 +20,7 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
     private readonly IPasswordHasher _passwordHasher;
     private readonly IRateLimiter? _rateLimiter;
     private readonly IAuditLogger _auditLogger;
+    private readonly IRememberMeTicketProtector? _ticketProtector;
 
     /// <summary>
     /// Creates a new instance of the handler
@@ -30,12 +31,14 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         UrlEncoder encoder,
         IPasswordHasher passwordHasher,
         IRateLimiter? rateLimiter = null,
-        IAuditLogger? auditLogger = null)
+        IAuditLogger? auditLogger = null,
+        IRememberMeTicketProtector? ticketProtector = null)
         : base(options, logger, encoder)
     {
         _passwordHasher = passwordHasher;
         _rateLimiter = rateLimiter;
         _auditLogger = auditLogger ?? NullAuditLogger.Instance;
+        _ticketProtector = ticketProtector;
     }
 
     /// <inheritdoc />
@@ -164,35 +167,10 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             _rateLimiter.Reset(rateLimitKey);
         }
 
-        // Build claims
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.Name, username),
-            new(ClaimTypes.NameIdentifier, username),
-            new(ClaimTypes.AuthenticationMethod, "Basic")
-        };
-
-        // Add user-specific claims
-        if (validationResult.User != null)
-        {
-            foreach (var role in validationResult.User.Roles)
-            {
-                claims.Add(new Claim(ClaimTypes.Role, role));
-            }
-
-            claims.AddRange(validationResult.User.Claims);
-        }
-
-        // Get additional claims from delegate
-        if (Options.GetAdditionalClaimsAsync != null)
-        {
-            var additionalClaims = await Options.GetAdditionalClaimsAsync(username, Context);
-            claims.AddRange(additionalClaims);
-        }
-
-        var identity = new ClaimsIdentity(claims, Scheme.Name);
-        var principal = new ClaimsPrincipal(identity);
+        var principal = await BuildPrincipalAsync(username, validationResult.User);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
+
+        IssueRememberMeCookie(ticket);
 
         _auditLogger.LogSuccess(Context, username, Scheme.Name);
 
@@ -331,6 +309,75 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
 
         return ValidationResult.Failed("No credentials configured");
     }
+
+    private async Task<ClaimsPrincipal> BuildPrincipalAsync(string username, BasicAuthenticationUser? user)
+    {
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.Name, username),
+            new(ClaimTypes.NameIdentifier, username),
+            new(ClaimTypes.AuthenticationMethod, "Basic")
+        };
+
+        if (user != null)
+        {
+            foreach (var role in user.Roles)
+            {
+                claims.Add(new Claim(ClaimTypes.Role, role));
+            }
+
+            claims.AddRange(user.Claims);
+        }
+
+        if (Options.GetAdditionalClaimsAsync != null)
+        {
+            var additionalClaims = await Options.GetAdditionalClaimsAsync(username, Context);
+            claims.AddRange(additionalClaims);
+        }
+
+        return new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
+    }
+
+    private void IssueRememberMeCookie(AuthenticationTicket ticket)
+    {
+        var rememberMe = Options.RememberMe;
+        if (rememberMe == null || _ticketProtector == null)
+        {
+            return;
+        }
+
+        var value = _ticketProtector.Protect(ticket, rememberMe.Duration);
+        Response.Cookies.Append(rememberMe.CookieName, value, BuildCookieOptions(rememberMe));
+    }
+
+    private void DeleteRememberMeCookie()
+    {
+        var rememberMe = Options.RememberMe;
+        if (rememberMe == null)
+        {
+            return;
+        }
+
+        var cookieOptions = BuildCookieOptions(rememberMe);
+        cookieOptions.Expires = null;
+        Response.Cookies.Delete(rememberMe.CookieName, cookieOptions);
+    }
+
+    private CookieOptions BuildCookieOptions(RememberMeOptions rememberMe) => new()
+    {
+        HttpOnly = true,
+        Secure = rememberMe.SecurePolicy switch
+        {
+            CookieSecurePolicy.Always => true,
+            CookieSecurePolicy.SameAsRequest => Request.IsHttps,
+            _ => false
+        },
+        SameSite = rememberMe.SameSite,
+        Path = rememberMe.Path,
+        Domain = rememberMe.Domain,
+        Expires = DateTimeOffset.UtcNow.Add(rememberMe.Duration),
+        IsEssential = true
+    };
 
     private string BuildRateLimitKey(string username)
     {
