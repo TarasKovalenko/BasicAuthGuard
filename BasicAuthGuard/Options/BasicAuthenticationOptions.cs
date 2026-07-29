@@ -65,6 +65,11 @@ public class BasicAuthenticationOptions : AuthenticationSchemeOptions
     public AuditLogOptions? AuditLog { get; set; }
 
     /// <summary>
+    /// Persistent "remember me" cookie configuration. Null disables the feature.
+    /// </summary>
+    public RememberMeOptions? RememberMe { get; set; }
+
+    /// <summary>
     /// Custom credential validation delegate
     /// </summary>
     public Func<string, string, HttpContext, Task<bool>>? ValidateCredentialsAsync { get; set; }
@@ -177,6 +182,16 @@ public class BasicAuthenticationOptions : AuthenticationSchemeOptions
     {
         AuditLog ??= new AuditLogOptions();
         configure(AuditLog);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the persistent "remember me" cookie
+    /// </summary>
+    public BasicAuthenticationOptions WithRememberMe(Action<RememberMeOptions> configure)
+    {
+        RememberMe ??= new RememberMeOptions();
+        configure(RememberMe);
         return this;
     }
 }
