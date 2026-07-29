@@ -76,9 +76,15 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             }
         }
 
-        // Check for Authorization header
+        // Check for Authorization header. A header always wins over the remember-me
+        // cookie so a user can re-authenticate or switch identity.
         if (!Request.Headers.ContainsKey("Authorization"))
         {
+            if (Options.RememberMe != null && _ticketProtector != null)
+            {
+                return await AuthenticateFromRememberMeCookieAsync();
+            }
+
             return AuthenticateResult.NoResult();
         }
 
@@ -338,6 +344,106 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         return new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
     }
 
+    private async Task<AuthenticateResult> AuthenticateFromRememberMeCookieAsync()
+    {
+        var rememberMe = Options.RememberMe!;
+        var auditScheme = $"{Scheme.Name} (remember-me)";
+
+        if (!Request.Cookies.TryGetValue(rememberMe.CookieName, out var cookieValue) ||
+            string.IsNullOrEmpty(cookieValue))
+        {
+            return AuthenticateResult.NoResult();
+        }
+
+        var storedTicket = _ticketProtector!.Unprotect(cookieValue);
+        if (storedTicket == null)
+        {
+            DeleteRememberMeCookie();
+            _auditLogger.LogFailure(Context, null, "Invalid remember-me cookie", auditScheme);
+            return AuthenticateResult.NoResult();
+        }
+
+        var username = storedTicket.Principal.FindFirst(ClaimTypes.Name)?.Value;
+        if (string.IsNullOrEmpty(username))
+        {
+            DeleteRememberMeCookie();
+            _auditLogger.LogFailure(Context, null, "Invalid remember-me cookie", auditScheme);
+            return AuthenticateResult.NoResult();
+        }
+
+        var revalidation = await RevalidateRememberMeAsync(username, storedTicket);
+        if (!revalidation.IsValid)
+        {
+            var reason = revalidation.FailureReason ?? "Invalid remember-me cookie";
+            DeleteRememberMeCookie();
+            _auditLogger.LogFailure(Context, username, reason, auditScheme);
+
+            var failedContext = new AuthenticationFailedContext(Context, Scheme, Options, username, reason);
+            await Options.Events.AuthenticationFailedAsync(failedContext);
+
+            return AuthenticateResult.Fail(reason);
+        }
+
+        var ticket = revalidation.Ticket!;
+
+        if (rememberMe.SlidingExpiration)
+        {
+            IssueRememberMeCookie(ticket);
+        }
+
+        _auditLogger.LogSuccess(Context, username, auditScheme);
+
+        var succeededContext = new AuthenticationSucceededContext(Context, Scheme, Options, username);
+        await Options.Events.AuthenticationSucceededAsync(succeededContext);
+
+        return AuthenticateResult.Success(ticket);
+    }
+
+    private async Task<RevalidationResult> RevalidateRememberMeAsync(string username, AuthenticationTicket storedTicket)
+    {
+        // Multi-user configuration: re-check the user so disabling an account or a
+        // closed schedule window takes effect immediately.
+        if (Options.Users.Count > 0)
+        {
+            var user = Options.Users.FirstOrDefault(u =>
+                string.Equals(u.Username, username, StringComparison.Ordinal));
+
+            if (user == null)
+            {
+                return RevalidationResult.Failed("Invalid username");
+            }
+
+            if (!user.IsEnabled)
+            {
+                return RevalidationResult.Failed("User disabled");
+            }
+
+            if (user.Schedule != null && !user.Schedule.IsAccessAllowed())
+            {
+                return RevalidationResult.Failed("Outside access schedule");
+            }
+
+            var principal = await BuildPrincipalAsync(username, user);
+            return RevalidationResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+        }
+
+        // Single-user configuration
+        if (!string.IsNullOrEmpty(Options.Username))
+        {
+            if (!string.Equals(Options.Username, username, StringComparison.Ordinal))
+            {
+                return RevalidationResult.Failed("Invalid username");
+            }
+
+            var principal = await BuildPrincipalAsync(username, null);
+            return RevalidationResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+        }
+
+        // Delegate-based validation: the password is not available, so the stored
+        // claims are the only thing we can trust.
+        return RevalidationResult.Success(new AuthenticationTicket(storedTicket.Principal, Scheme.Name));
+    }
+
     private void IssueRememberMeCookie(AuthenticationTicket ticket)
     {
         var rememberMe = Options.RememberMe;
@@ -400,5 +506,11 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
     {
         public static ValidationResult Success(BasicAuthenticationUser? user = null) => new(true, null, user);
         public static ValidationResult Failed(string reason) => new(false, reason);
+    }
+
+    private record RevalidationResult(bool IsValid, string? FailureReason, AuthenticationTicket? Ticket)
+    {
+        public static RevalidationResult Success(AuthenticationTicket ticket) => new(true, null, ticket);
+        public static RevalidationResult Failed(string reason) => new(false, reason, null);
     }
 }

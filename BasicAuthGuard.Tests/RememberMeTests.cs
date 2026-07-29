@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Shouldly;
 
 namespace AspNetCore.BasicAuthentication.Tests;
@@ -228,6 +229,262 @@ public class RememberMeTests
         // Assert
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         GetSetCookie(response, ".BasicAuthGuard.Remember").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task CookieAlone_ShouldAuthenticateWithoutAuthorizationHeader()
+    {
+        // Arrange
+        using var host = await CreateHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("admin", "password123");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Act - no Authorization header this time
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await second.Content.ReadAsStringAsync()).ShouldBe("admin");
+    }
+
+    [Fact]
+    public async Task NonSlidingCookie_ShouldNotBeReissuedOnCookieAuth()
+    {
+        // Arrange
+        using var host = await CreateHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("admin", "password123");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        GetSetCookie(second, ".BasicAuthGuard.Remember").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task SlidingCookie_ShouldBeReissuedOnCookieAuth()
+    {
+        // Arrange
+        using var host = await CreateHost(remember =>
+        {
+            remember.SecurePolicy = CookieSecurePolicy.None;
+            remember.SlidingExpiration = true;
+        });
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("admin", "password123");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        GetSetCookie(second, ".BasicAuthGuard.Remember").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task GarbageCookie_ShouldReturn401AndClearCookie()
+    {
+        // Arrange
+        using var host = await CreateHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Add("Cookie", ".BasicAuthGuard.Remember=not-a-real-ticket");
+
+        // Act
+        var response = await client.GetAsync("/secure");
+
+        // Assert
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        response.Headers.WwwAuthenticate.ShouldNotBeEmpty();
+        var setCookie = GetSetCookie(response, ".BasicAuthGuard.Remember");
+        setCookie.ShouldNotBeNull();
+        setCookie!.ShouldContain("expires=Thu, 01 Jan 1970", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task AuthorizationHeader_ShouldWinOverCookie()
+    {
+        // Arrange - get a cookie for user1, then send it alongside user2's header
+        using var host = await CreateMultiUserHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("user1", "pass1");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = BasicHeader("user2", "pass2");
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await second.Content.ReadAsStringAsync()).ShouldBe("user2");
+    }
+
+    [Fact]
+    public async Task DisabledUser_ShouldRejectCookieAndClearIt()
+    {
+        // Arrange
+        using var host = await CreateMultiUserHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("user1", "pass1");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Disable the user after the cookie was issued
+        var options = host.Services
+            .GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<BasicAuthenticationOptions>>()
+            .Get(BasicAuthenticationDefaults.AuthenticationScheme);
+        options.Users.First(u => u.Username == "user1").IsEnabled = false;
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        var setCookie = GetSetCookie(second, ".BasicAuthGuard.Remember");
+        setCookie.ShouldNotBeNull();
+        setCookie!.ShouldContain("expires=Thu, 01 Jan 1970", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task CookieAuth_ShouldRestoreRolesFromCurrentConfiguration()
+    {
+        // Arrange
+        using var host = await CreateMultiUserHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("user1", "pass1");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/roles");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await second.Content.ReadAsStringAsync()).ShouldBe("Admin");
+    }
+
+    [Fact]
+    public async Task IpBypassedRequest_ShouldNotSetCookie()
+    {
+        // Arrange - TestServer requests come from ::1, which bypasses auth entirely
+        using var host = await CreateIpBypassHost();
+        var client = host.GetTestClient();
+
+        // Act
+        var response = await client.GetAsync("/secure");
+
+        // Assert
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        GetSetCookie(response, ".BasicAuthGuard.Remember").ShouldBeNull();
+    }
+
+    private static async Task<IHost> CreateIpBypassHost()
+    {
+        var host = new HostBuilder()
+            .ConfigureWebHost(webBuilder =>
+            {
+                webBuilder.UseTestServer();
+                webBuilder.ConfigureServices(services =>
+                {
+                    services.AddBasicAuthGuard(options =>
+                    {
+                        options.Username = "admin";
+                        options.Password = "password123";
+                        options.WithIpWhitelist(whitelist =>
+                        {
+                            whitelist.AllowedRanges.Add("::1");
+                            whitelist.AllowedRanges.Add("127.0.0.1");
+                            whitelist.BypassAuthForAllowedIps = true;
+                        });
+                        options.WithRememberMe(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+                    });
+                    services.AddBasicAuthGuardPolicy();
+                    services.AddAuthorization();
+                    services.AddRouting();
+                });
+                webBuilder.Configure(app =>
+                {
+                    // TestServer does not populate Connection.RemoteIpAddress by default, so
+                    // simulate a loopback client explicitly to exercise the bypass path.
+                    app.Use(async (context, next) =>
+                    {
+                        context.Connection.RemoteIpAddress = IPAddress.Loopback;
+                        await next();
+                    });
+                    app.UseRouting();
+                    app.UseAuthentication();
+                    app.UseAuthorization();
+                    app.UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapGet("/secure", (HttpContext ctx) => ctx.User.Identity!.Name)
+                            .RequireBasicAuth();
+                    });
+                });
+            })
+            .Build();
+
+        await host.StartAsync();
+        return host;
+    }
+
+    private static async Task<IHost> CreateMultiUserHost(Action<RememberMeOptions> remember)
+    {
+        var host = new HostBuilder()
+            .ConfigureWebHost(webBuilder =>
+            {
+                webBuilder.UseTestServer();
+                webBuilder.ConfigureServices(services =>
+                {
+                    services.AddBasicAuthGuard(options =>
+                    {
+                        options.AddUser("user1", "pass1", ["Admin"]);
+                        options.AddUser("user2", "pass2");
+                        options.WithRememberMe(remember);
+                    });
+                    services.AddBasicAuthGuardPolicy();
+                    services.AddAuthorization();
+                    services.AddRouting();
+                });
+                webBuilder.Configure(app =>
+                {
+                    app.UseRouting();
+                    app.UseAuthentication();
+                    app.UseAuthorization();
+                    app.UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapGet("/secure", (HttpContext ctx) => ctx.User.Identity!.Name)
+                            .RequireBasicAuth();
+
+                        endpoints.MapGet("/roles", (HttpContext ctx) =>
+                                string.Join(",", ctx.User.FindAll(System.Security.Claims.ClaimTypes.Role)
+                                    .Select(c => c.Value)))
+                            .RequireBasicAuth();
+                    });
+                });
+            })
+            .Build();
+
+        await host.StartAsync();
+        return host;
     }
 
     private static AuthenticationHeaderValue BasicHeader(string username, string password) =>
