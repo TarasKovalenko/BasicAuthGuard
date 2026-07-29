@@ -401,6 +401,18 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
 
     private async Task<RevalidationResult> RevalidateRememberMeAsync(string username, AuthenticationTicket storedTicket)
     {
+        // Mirrors ValidateCredentialsAsync's precedence: delegate/events first, then Users,
+        // then Username. A delegate or events handler can be configured alongside a populated
+        // Users list (nothing in the public API forbids it); on the header path that combination
+        // takes the delegate/events branch and never looks at Users, so the cookie path must do
+        // the same or it could grant an identity (e.g. roles from a Users entry) that the header
+        // path never granted. The password is not available here, so this branch always trusts
+        // the stored claims rather than re-checking them.
+        if (Options.ValidateCredentialsAsync != null || Options.Events.OnValidateCredentials != null)
+        {
+            return RevalidationResult.Success(new AuthenticationTicket(storedTicket.Principal, Scheme.Name));
+        }
+
         // Multi-user configuration: re-check the user so disabling an account or a
         // closed schedule window takes effect immediately.
         if (Options.Users.Count > 0)
@@ -439,8 +451,9 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             return RevalidationResult.Success(new AuthenticationTicket(principal, Scheme.Name));
         }
 
-        // Delegate-based validation: the password is not available, so the stored
-        // claims are the only thing we can trust.
+        // No credentials configured at all: nothing to re-check against, so trust the
+        // stored claims (matches ValidateCredentialsAsync's final fallback being a failure
+        // only because a password re-check is required there; here there is none).
         return RevalidationResult.Success(new AuthenticationTicket(storedTicket.Principal, Scheme.Name));
     }
 

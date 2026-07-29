@@ -335,6 +335,32 @@ public class RememberMeTests
     }
 
     [Fact]
+    public async Task DelegateValidation_ShouldTakePrecedenceOverUsersOnCookieRevalidation()
+    {
+        // Arrange - a validation delegate is configured alongside a Users entry carrying a
+        // role. On the header path, ValidateCredentialsAsync's precedence takes the delegate
+        // branch first and never consults Users, so no role claim is attached. The cookie path
+        // must mirror that precedence rather than finding the Users entry and granting the role
+        // the header-authenticated request never got.
+        using var host = await CreateDelegateWithUsersHost();
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("user1", "pass1");
+        var first = await client.GetAsync("/roles");
+        first.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await first.Content.ReadAsStringAsync()).ShouldBe(string.Empty);
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/roles");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await second.Content.ReadAsStringAsync()).ShouldBe(string.Empty);
+    }
+
+    [Fact]
     public async Task DisabledUser_ShouldRejectCookieAndClearIt()
     {
         // Arrange
@@ -346,7 +372,7 @@ public class RememberMeTests
 
         // Disable the user after the cookie was issued
         var options = host.Services
-            .GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<BasicAuthenticationOptions>>()
+            .GetRequiredService<IOptionsMonitor<BasicAuthenticationOptions>>()
             .Get(BasicAuthenticationDefaults.AuthenticationScheme);
         options.Users.First(u => u.Username == "user1").IsEnabled = false;
 
@@ -372,6 +398,15 @@ public class RememberMeTests
         var first = await client.GetAsync("/secure");
         var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
 
+        // Change the user's roles after the cookie was issued - the cookie's stored ticket
+        // still carries "Admin", so a response of "Manager" proves the claims were rebuilt
+        // from current configuration rather than replayed verbatim from the cookie.
+        var options = host.Services
+            .GetRequiredService<IOptionsMonitor<BasicAuthenticationOptions>>()
+            .Get(BasicAuthenticationDefaults.AuthenticationScheme);
+        var user1 = options.Users.First(u => u.Username == "user1");
+        user1.Roles = ["Manager"];
+
         // Act
         client.DefaultRequestHeaders.Authorization = null;
         client.DefaultRequestHeaders.Add("Cookie", cookie);
@@ -379,13 +414,13 @@ public class RememberMeTests
 
         // Assert
         second.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await second.Content.ReadAsStringAsync()).ShouldBe("Admin");
+        (await second.Content.ReadAsStringAsync()).ShouldBe("Manager");
     }
 
     [Fact]
     public async Task IpBypassedRequest_ShouldNotSetCookie()
     {
-        // Arrange - TestServer requests come from ::1, which bypasses auth entirely
+        // Arrange - CreateIpBypassHost's middleware stamps RemoteIpAddress as loopback, which bypasses auth entirely
         using var host = await CreateIpBypassHost();
         var client = host.GetTestClient();
 
@@ -476,6 +511,45 @@ public class RememberMeTests
 
                         endpoints.MapGet("/roles", (HttpContext ctx) =>
                                 string.Join(",", ctx.User.FindAll(System.Security.Claims.ClaimTypes.Role)
+                                    .Select(c => c.Value)))
+                            .RequireBasicAuth();
+                    });
+                });
+            })
+            .Build();
+
+        await host.StartAsync();
+        return host;
+    }
+
+    private static async Task<IHost> CreateDelegateWithUsersHost()
+    {
+        var host = new HostBuilder()
+            .ConfigureWebHost(webBuilder =>
+            {
+                webBuilder.UseTestServer();
+                webBuilder.ConfigureServices(services =>
+                {
+                    services.AddBasicAuthGuard(options =>
+                    {
+                        options.ValidateCredentialsAsync = (username, password, _) =>
+                            Task.FromResult(username == "user1" && password == "pass1");
+                        options.AddUser("user1", "pass1", ["Admin"]);
+                        options.WithRememberMe(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+                    });
+                    services.AddBasicAuthGuardPolicy();
+                    services.AddAuthorization();
+                    services.AddRouting();
+                });
+                webBuilder.Configure(app =>
+                {
+                    app.UseRouting();
+                    app.UseAuthentication();
+                    app.UseAuthorization();
+                    app.UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapGet("/roles", (HttpContext ctx) =>
+                                string.Join(",", ctx.User.FindAll(ClaimTypes.Role)
                                     .Select(c => c.Value)))
                             .RequireBasicAuth();
                     });
