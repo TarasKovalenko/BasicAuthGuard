@@ -1,6 +1,7 @@
 using AspNetCore.BasicAuthentication.RateLimiting;
 using AspNetCore.BasicAuthentication.Services;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -99,6 +100,12 @@ public static class ServiceCollectionExtensions
                     options.AuditLog));
         }
 
+        if (options.RememberMe != null)
+        {
+            services.AddDataProtection();
+            services.TryAddSingleton<IRememberMeTicketProtector, RememberMeTicketProtector>();
+        }
+
         return services
             .AddAuthentication(schemeName)
             .AddScheme<BasicAuthenticationOptions, BasicAuthenticationHandler>(schemeName, configure);
@@ -161,6 +168,12 @@ public static class ServiceCollectionExtensions
                 new AuditLogger(
                     sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<AuditLogger>>(),
                     options.AuditLog));
+        }
+
+        if (options.RememberMe != null)
+        {
+            builder.Services.AddDataProtection();
+            builder.Services.TryAddSingleton<IRememberMeTicketProtector, RememberMeTicketProtector>();
         }
 
         return builder.AddScheme<BasicAuthenticationOptions, BasicAuthenticationHandler>(schemeName, configure);
