@@ -13,14 +13,15 @@
 ## Global Constraints
 
 - Target frameworks: `net8.0;net9.0;net10.0`. Code must compile on all three — no APIs newer than .NET 8.
+- **This machine has no .NET 8 runtime** (SDKs 9.0.316 and 10.0.302 only). `net8.0` still compiles, but tests can only be *run* on net9.0 / net10.0. Use `-f net9.0`; never `-f net8.0`, and never `dotnet test` without `-f` (it tries all three and aborts on net8.0).
 - `Nullable` is `enable`. No `#nullable disable`, no `!` on values that can genuinely be null.
 - **No new NuGet packages.** `<FrameworkReference Include="Microsoft.AspNetCore.App" />` already supplies Data Protection, `TicketSerializer`, and `WebEncoders`.
 - Root namespace is `AspNetCore.BasicAuthentication`. Options live in `AspNetCore.BasicAuthentication.Options`, services in `AspNetCore.BasicAuthentication.Services`. These two namespaces are in `GlobalUsings.cs` for the library project — inside `BasicAuthGuard/` you do not need to import `...Options`, `...Models`, `...Events`, or `...Events.Context`.
 - Every public type and public member gets an XML `<summary>` doc comment. The project sets `EnforceExtendedAnalyzerRules`; the rest of the codebase documents everything, so match it.
 - Tests use xUnit with `Shouldly` assertions (`value.ShouldBe(...)`), `[Fact]` methods, and the `// Arrange / // Act / // Assert` comment structure used by the existing suites.
 - Build: `dotnet build BasicAuthGuard/BasicAuthGuard.csproj`
-- Test one framework (fast): `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0`
-- Filter a single test: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMe"`
+- Test one framework (fast): `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0`
+- Filter a single test: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMe"`
 - Work happens on branch `feature/remember-me`, already checked out.
 
 ---
@@ -143,7 +144,7 @@ public class RememberMeTests
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: compile error — `RememberMeOptions` does not exist, `BasicAuthenticationOptions` has no `RememberMe` / `WithRememberMe`.
 
 - [ ] **Step 3: Create RememberMeOptions**
@@ -252,7 +253,7 @@ And add after the `WithAuditLog` method:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: 6 passed (the `[Theory]` counts as 3).
 
 - [ ] **Step 6: Commit**
@@ -376,7 +377,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: compile error — `RememberMeTicketProtector` does not exist.
 
 - [ ] **Step 3: Create the protector**
@@ -469,7 +470,7 @@ public sealed class RememberMeTicketProtector : IRememberMeTicketProtector
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: all pass, including the 6 from Task 1.
 
 - [ ] **Step 5: Register the service**
@@ -500,7 +501,7 @@ Add `using Microsoft.AspNetCore.DataProtection;` at the top of the file. `AddDat
 
 - [ ] **Step 6: Build to verify registration compiles**
 
-Run: `dotnet build BasicAuthGuard/BasicAuthGuard.csproj -f net8.0`
+Run: `dotnet build BasicAuthGuard/BasicAuthGuard.csproj -f net9.0`
 Expected: build succeeded, 0 warnings.
 
 - [ ] **Step 7: Commit**
@@ -652,7 +653,7 @@ using Microsoft.Extensions.Hosting;
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: `SuccessfulAuth_WithRememberMeEnabled_ShouldSetCookie` fails — cookie is null. The other two pass already.
 
 - [ ] **Step 3: Add the protector dependency to the handler**
@@ -782,12 +783,12 @@ Then add these private methods below `ValidateCredentialsAsync`:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: all pass.
 
 - [ ] **Step 6: Run the whole suite — the refactor touched the shared success path**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0`
 Expected: all pre-existing tests still pass.
 
 - [ ] **Step 7: Commit**
@@ -1066,7 +1067,7 @@ Append to `BasicAuthGuard.Tests/RememberMeTests.cs`. The multi-user host helper 
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: the cookie-authentication tests fail with 401 — the handler still ignores the cookie. `AuthorizationHeader_ShouldWinOverCookie` passes already.
 
 - [ ] **Step 3: Read the cookie when no Authorization header is present**
@@ -1215,7 +1216,7 @@ And add this record next to the existing private `ValidationResult` record at th
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~RememberMeTests"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~RememberMeTests"`
 Expected: all pass.
 
 - [ ] **Step 6: Run the full suite on all three frameworks**
@@ -1315,7 +1316,7 @@ Append to `BasicAuthGuard.Tests/RememberMeTests.cs`:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~SignOut_ShouldClearCookie"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~SignOut_ShouldClearCookie"`
 Expected: FAIL — `InvalidOperationException: ... no IAuthenticationSignOutHandler is configured to handle sign out for the scheme: BasicAuthGuard`.
 
 - [ ] **Step 3: Implement the sign-out handler**
@@ -1349,12 +1350,12 @@ And add this method after `HandleForbiddenAsync`:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0 --filter "FullyQualifiedName~SignOut_ShouldClearCookie"`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0 --filter "FullyQualifiedName~SignOut_ShouldClearCookie"`
 Expected: PASS
 
 - [ ] **Step 5: Run the full suite**
 
-Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net8.0`
+Run: `dotnet test BasicAuthGuard.Tests/BasicAuthGuard.Tests.csproj -f net9.0`
 Expected: all pass.
 
 - [ ] **Step 6: Commit**
