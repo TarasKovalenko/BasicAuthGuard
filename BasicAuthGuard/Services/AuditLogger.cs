@@ -28,7 +28,7 @@ public class AuditLogger : IAuditLogger
     private readonly AuditLogOptions _options;
 
     private const string DefaultSuccessTemplate =
-        "[BasicAuthGuard] Authentication succeeded for user '{Username}' from {IpAddress} on {Path}";
+        "[BasicAuthGuard] Authentication succeeded for user '{Username}' from {IpAddress} on {Path} via {Scheme}";
 
     private const string DefaultFailureTemplate =
         "[BasicAuthGuard] Authentication failed for user '{Username}' from {IpAddress} on {Path}. Reason: {Reason}";

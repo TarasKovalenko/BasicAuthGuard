@@ -18,6 +18,7 @@ Zero-config Basic Authentication for ASP.NET Core. Inline credentials, per-endpo
 - 🔒 **Password Hashing** - Support for SHA256, SHA512, and BCrypt
 - 📅 **Access Schedules** - Time-based access restrictions
 - 🎪 **Event Hooks** - Custom logic for authentication lifecycle
+- 🍪 **Remember Me** - Persistent encrypted cookie so the native prompt doesn't reappear every session
 
 ## Terms of use
 
@@ -113,6 +114,7 @@ app.MapGet("/metrics", () => GetMetrics());
 - [Rate Limiting](#rate-limiting)
 - [IP Whitelisting](#ip-whitelisting)
 - [Audit Logging](#audit-logging)
+- [Remember Me](#remember-me)
 - [Access Schedules](#access-schedules)
 - [Custom Validation](#custom-validation)
 - [Events](#events)
@@ -493,6 +495,109 @@ builder.Services.AddBasicAuthGuard(options =>
 
 ---
 
+## Remember Me
+
+The browser's native Basic-auth dialog is browser chrome — a server cannot add a
+"remember me" checkbox to it, and browsers forget Basic credentials when they close.
+
+`WithRememberMe` closes that gap: after a successful authentication, BasicAuthGuard
+issues an encrypted, HttpOnly cookie. Later requests that carry no `Authorization`
+header authenticate from that cookie, so the dialog does not come back until the
+cookie expires.
+
+```csharp
+builder.Services.AddBasicAuthGuard(options =>
+{
+    options.Username = "admin";
+    options.Password = "password123";
+
+    options.WithRememberMe(remember =>
+    {
+        remember.Duration = TimeSpan.FromDays(30);   // default: 14 days, max: 365
+        remember.SlidingExpiration = true;           // default: false
+        remember.CookieName = ".BasicAuthGuard.Remember";
+        remember.SameSite = SameSiteMode.Lax;
+        remember.SecurePolicy = CookieSecurePolicy.Always;
+    });
+});
+```
+
+Behaviour:
+
+- The native dialog still appears the **first** time. The cookie is issued only after
+  those credentials are accepted.
+- An `Authorization` header always wins over the cookie, so a user can re-authenticate
+  or switch identity at any time.
+- Revalidating the cookie follows the same precedence as the initial login: if a
+  `ValidateCredentialsAsync` delegate or an `OnValidateCredentials` event is
+  configured, the password is not available on the cookie path, so the claims stored
+  in the cookie are trusted until it expires. Otherwise, when users are configured
+  through `AddUser`, every cookie-authenticated request re-checks the user: disabling
+  an account or falling outside an `AccessSchedule` rejects the cookie immediately and
+  clears it, and roles and claims are rebuilt from the current configuration.
+  Otherwise, the single configured `Username` must still match.
+- The cookie is always `HttpOnly` and is `Secure` by default. It is encrypted and
+  signed with ASP.NET Core Data Protection, and the expiry is enforced server-side.
+- If no credentials are configured at all (no delegate, no events, no `AddUser`, no
+  `Username`), the cookie is rejected and cleared — the same way header auth fails with
+  "No credentials configured". Outstanding cookies never outlive the configuration that
+  issued them.
+- The cookie is issued to every client that authenticates with a `Authorization: Basic`
+  header, including non-browser API clients that ignore `Set-Cookie`. Because requests
+  can now be authenticated by a cookie, treat state-changing endpoints as CSRF-exposed:
+  keep `SameSite` at `Lax` (the default) or `Strict`, and use `POST` for anything that
+  mutates state.
+- `UrlBasicAuthenticationMiddleware` (`AddBasicAuthGuard` on `IApplicationBuilder` /
+  `UseBasicAuthGuard`) and the per-endpoint `RequireBasicAuth(username, password, ...)`
+  filter are header-only by design — they do not read or issue the remember-me cookie.
+  Paths guarded only by those still prompt on every request even when `RememberMe` is
+  enabled on the main scheme. Use the scheme-based `RequireBasicAuth()` policy overload
+  for endpoints that should participate in remember-me.
+
+**Multi-scheme apps:** if you call `AddBasicAuthGuard(schemeName, configure)` more than
+once to register multiple BasicAuthGuard schemes, give each scheme's `RememberMe` a
+distinct `CookieName`. The encryption purpose is already scoped per scheme, so a cookie
+from one scheme cannot be decrypted under another, but sharing a cookie name still means
+each scheme's cookie overwrites the other's in the browser's cookie jar.
+
+### Signing out
+
+```csharp
+app.MapPost("/logout", async (HttpContext context) =>
+{
+    await context.SignOutAsync(BasicAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok("Signed out");
+});
+```
+
+Use `MapPost`, not `MapGet` — sign-out changes state, and a `GET` endpoint can be
+triggered by any third-party page (e.g. `<img src="…/logout">`) without the user's
+intent.
+
+This clears the cookie. The browser may still hold cached Basic credentials for the
+current session — that part is browser-controlled and closing the browser clears it.
+
+Sign-out only clears the cookie on the browser that called it. There is no server-side
+revocation list, so a cookie already issued to another device stays valid until it
+expires. If you need to invalidate every outstanding cookie at once, revoke the Data
+Protection keyring or change the scheme name.
+
+### Persist your Data Protection keys
+
+The cookie is encrypted with the app's Data Protection keyring. On a single machine
+with default settings this just works. **If you run multiple instances, containers, or
+anything with an ephemeral filesystem, persist and share the keyring** — otherwise
+every restart or scale-out invalidates all remember-me cookies and users get prompted
+again:
+
+```csharp
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo("/var/keys"))
+    .SetApplicationName("MyApp");
+```
+
+---
+
 ## Access Schedules
 
 Restrict user access to specific days and hours.
@@ -675,6 +780,7 @@ builder.Services.AddBasicAuthGuard(options =>
 | `RateLimiting` | `RateLimitOptions?` | `null` | Rate limiting config |
 | `IpWhitelist` | `IpWhitelistOptions?` | `null` | IP whitelist config |
 | `AuditLog` | `AuditLogOptions?` | `null` | Audit logging config |
+| `RememberMe` | `RememberMeOptions?` | `null` | Remember-me cookie config |
 | `ValidateCredentialsAsync` | `Func<...>?` | `null` | Custom validation delegate |
 | `GetAdditionalClaimsAsync` | `Func<...>?` | `null` | Additional claims provider |
 | `Events` | `BasicAuthenticationEvents` | `new()` | Event handlers |

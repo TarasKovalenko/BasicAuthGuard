@@ -15,11 +15,12 @@ namespace AspNetCore.BasicAuthentication;
 /// <summary>
 /// Authentication handler for Basic authentication
 /// </summary>
-public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticationOptions>
+public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticationOptions>, IAuthenticationSignOutHandler
 {
     private readonly IPasswordHasher _passwordHasher;
     private readonly IRateLimiter? _rateLimiter;
     private readonly IAuditLogger _auditLogger;
+    private readonly IRememberMeTicketProtector? _ticketProtector;
 
     /// <summary>
     /// Creates a new instance of the handler
@@ -30,12 +31,14 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         UrlEncoder encoder,
         IPasswordHasher passwordHasher,
         IRateLimiter? rateLimiter = null,
-        IAuditLogger? auditLogger = null)
+        IAuditLogger? auditLogger = null,
+        IRememberMeTicketProtector? ticketProtector = null)
         : base(options, logger, encoder)
     {
         _passwordHasher = passwordHasher;
         _rateLimiter = rateLimiter;
         _auditLogger = auditLogger ?? NullAuditLogger.Instance;
+        _ticketProtector = ticketProtector;
     }
 
     /// <inheritdoc />
@@ -73,9 +76,15 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             }
         }
 
-        // Check for Authorization header
+        // Check for Authorization header. A header always wins over the remember-me
+        // cookie so a user can re-authenticate or switch identity.
         if (!Request.Headers.ContainsKey("Authorization"))
         {
+            if (Options.RememberMe != null && _ticketProtector != null)
+            {
+                return await AuthenticateFromRememberMeCookieAsync();
+            }
+
             return AuthenticateResult.NoResult();
         }
 
@@ -164,35 +173,20 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             _rateLimiter.Reset(rateLimitKey);
         }
 
-        // Build claims
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.Name, username),
-            new(ClaimTypes.NameIdentifier, username),
-            new(ClaimTypes.AuthenticationMethod, "Basic")
-        };
-
-        // Add user-specific claims
-        if (validationResult.User != null)
-        {
-            foreach (var role in validationResult.User.Roles)
-            {
-                claims.Add(new Claim(ClaimTypes.Role, role));
-            }
-
-            claims.AddRange(validationResult.User.Claims);
-        }
-
-        // Get additional claims from delegate
-        if (Options.GetAdditionalClaimsAsync != null)
-        {
-            var additionalClaims = await Options.GetAdditionalClaimsAsync(username, Context);
-            claims.AddRange(additionalClaims);
-        }
-
-        var identity = new ClaimsIdentity(claims, Scheme.Name);
-        var principal = new ClaimsPrincipal(identity);
+        var principal = await BuildPrincipalAsync(username, validationResult.User);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
+
+        // Browsers resend Authorization on every request, so this branch runs on every
+        // request for the life of the session. Re-issuing unconditionally would append a
+        // Set-Cookie every time and slide the absolute expiry forward forever even though
+        // SlidingExpiration=false is documented as "not re-issued". Only skip re-issuing
+        // when a still-valid cookie for this same identity is already present; a fresh
+        // login (no cookie, a different identity, or an unusable cookie) always gets one.
+        if (Options.RememberMe != null &&
+            (Options.RememberMe.SlidingExpiration || !HasValidRememberMeCookieForUser(username)))
+        {
+            IssueRememberMeCookie(ticket);
+        }
 
         _auditLogger.LogSuccess(Context, username, Scheme.Name);
 
@@ -233,6 +227,23 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         }
 
         Response.StatusCode = StatusCodes.Status403Forbidden;
+    }
+
+    /// <summary>
+    /// Clears the remember-me cookie. Basic authentication itself is stateless, so this
+    /// is the only server-side state a sign-out can remove.
+    /// </summary>
+    public Task SignOutAsync(AuthenticationProperties? properties)
+    {
+        DeleteRememberMeCookie();
+
+        var username = Context.User.Identity?.Name;
+        if (!string.IsNullOrEmpty(username))
+        {
+            _auditLogger.LogSuccess(Context, username, $"{Scheme.Name} (sign-out)");
+        }
+
+        return Task.CompletedTask;
     }
 
     private async Task<ValidationResult> ValidateCredentialsAsync(string username, string password)
@@ -332,6 +343,216 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         return ValidationResult.Failed("No credentials configured");
     }
 
+    private async Task<ClaimsPrincipal> BuildPrincipalAsync(string username, BasicAuthenticationUser? user)
+    {
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.Name, username),
+            new(ClaimTypes.NameIdentifier, username),
+            new(ClaimTypes.AuthenticationMethod, "Basic")
+        };
+
+        if (user != null)
+        {
+            foreach (var role in user.Roles)
+            {
+                claims.Add(new Claim(ClaimTypes.Role, role));
+            }
+
+            claims.AddRange(user.Claims);
+        }
+
+        if (Options.GetAdditionalClaimsAsync != null)
+        {
+            var additionalClaims = await Options.GetAdditionalClaimsAsync(username, Context);
+            claims.AddRange(additionalClaims);
+        }
+
+        return new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
+    }
+
+    private async Task<AuthenticateResult> AuthenticateFromRememberMeCookieAsync()
+    {
+        var rememberMe = Options.RememberMe!;
+        var auditScheme = $"{Scheme.Name} (remember-me)";
+
+        if (!Request.Cookies.TryGetValue(rememberMe.CookieName, out var cookieValue) ||
+            string.IsNullOrEmpty(cookieValue))
+        {
+            return AuthenticateResult.NoResult();
+        }
+
+        var storedTicket = _ticketProtector!.Unprotect(cookieValue, Scheme.Name);
+        if (storedTicket == null)
+        {
+            DeleteRememberMeCookie();
+            _auditLogger.LogFailure(Context, null, "Unreadable remember-me cookie", auditScheme);
+            return AuthenticateResult.NoResult();
+        }
+
+        var username = storedTicket.Principal.FindFirst(ClaimTypes.Name)?.Value;
+        if (string.IsNullOrEmpty(username))
+        {
+            DeleteRememberMeCookie();
+            _auditLogger.LogFailure(Context, null, "Remember-me cookie missing name claim", auditScheme);
+            return AuthenticateResult.NoResult();
+        }
+
+        var revalidation = await RevalidateRememberMeAsync(username, storedTicket);
+        if (!revalidation.IsValid)
+        {
+            var reason = revalidation.FailureReason ?? "Invalid remember-me cookie";
+            DeleteRememberMeCookie();
+            _auditLogger.LogFailure(Context, username, reason, auditScheme);
+
+            var failedContext = new AuthenticationFailedContext(Context, Scheme, Options, username, reason);
+            await Options.Events.AuthenticationFailedAsync(failedContext);
+
+            return AuthenticateResult.Fail(reason);
+        }
+
+        var ticket = revalidation.Ticket!;
+
+        if (rememberMe.SlidingExpiration)
+        {
+            IssueRememberMeCookie(ticket);
+        }
+
+        _auditLogger.LogSuccess(Context, username, auditScheme);
+
+        var succeededContext = new AuthenticationSucceededContext(Context, Scheme, Options, username);
+        await Options.Events.AuthenticationSucceededAsync(succeededContext);
+
+        return AuthenticateResult.Success(ticket);
+    }
+
+    private async Task<RevalidationResult> RevalidateRememberMeAsync(string username, AuthenticationTicket storedTicket)
+    {
+        // Mirrors ValidateCredentialsAsync's precedence: delegate/events first, then Users,
+        // then Username. A delegate or events handler can be configured alongside a populated
+        // Users list (nothing in the public API forbids it); on the header path that combination
+        // takes the delegate/events branch and never looks at Users, so the cookie path must do
+        // the same or it could grant an identity (e.g. roles from a Users entry) that the header
+        // path never granted. The password is not available here, so this branch always trusts
+        // the stored claims rather than re-checking them.
+        if (Options.ValidateCredentialsAsync != null || Options.Events.OnValidateCredentials != null)
+        {
+            return RevalidationResult.Success(new AuthenticationTicket(storedTicket.Principal, Scheme.Name));
+        }
+
+        // Multi-user configuration: re-check the user so disabling an account or a
+        // closed schedule window takes effect immediately.
+        if (Options.Users.Count > 0)
+        {
+            var user = Options.Users.FirstOrDefault(u =>
+                string.Equals(u.Username, username, StringComparison.Ordinal));
+
+            if (user == null)
+            {
+                return RevalidationResult.Failed("Invalid username");
+            }
+
+            if (!user.IsEnabled)
+            {
+                return RevalidationResult.Failed("User disabled");
+            }
+
+            if (user.Schedule != null && !user.Schedule.IsAccessAllowed())
+            {
+                return RevalidationResult.Failed("Outside access schedule");
+            }
+
+            var principal = await BuildPrincipalAsync(username, user);
+            return RevalidationResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+        }
+
+        // Single-user configuration
+        if (!string.IsNullOrEmpty(Options.Username))
+        {
+            if (!string.Equals(Options.Username, username, StringComparison.Ordinal))
+            {
+                return RevalidationResult.Failed("Invalid username");
+            }
+
+            var principal = await BuildPrincipalAsync(username, null);
+            return RevalidationResult.Success(new AuthenticationTicket(principal, Scheme.Name));
+        }
+
+        // No credentials configured at all: there is nothing to validate the stored
+        // claims against, so this must fail just like ValidateCredentialsAsync's
+        // identical fallback on the header path (see the final branch above,
+        // "No credentials configured"). Trusting the cookie here would let clearing
+        // every configured credential lock out header auth while every outstanding
+        // remember-me cookie kept working for up to 365 days.
+        return RevalidationResult.Failed("No credentials configured");
+    }
+
+    private void IssueRememberMeCookie(AuthenticationTicket ticket)
+    {
+        var rememberMe = Options.RememberMe;
+        if (rememberMe == null || _ticketProtector == null)
+        {
+            return;
+        }
+
+        var value = _ticketProtector.Protect(ticket, rememberMe.Duration, Scheme.Name);
+        Response.Cookies.Append(rememberMe.CookieName, value, BuildCookieOptions(rememberMe));
+    }
+
+    /// <summary>
+    /// Checks whether the request already carries a remember-me cookie that unprotects
+    /// successfully and names the same user as the one who just authenticated via the
+    /// header. Used to avoid re-issuing (and sliding the expiry of) a cookie that is
+    /// already valid for this identity.
+    /// </summary>
+    private bool HasValidRememberMeCookieForUser(string username)
+    {
+        var rememberMe = Options.RememberMe;
+        if (rememberMe == null || _ticketProtector == null)
+        {
+            return false;
+        }
+
+        if (!Request.Cookies.TryGetValue(rememberMe.CookieName, out var cookieValue) ||
+            string.IsNullOrEmpty(cookieValue))
+        {
+            return false;
+        }
+
+        var storedTicket = _ticketProtector.Unprotect(cookieValue, Scheme.Name);
+        var storedUsername = storedTicket?.Principal.FindFirst(ClaimTypes.Name)?.Value;
+
+        return storedTicket != null && string.Equals(storedUsername, username, StringComparison.Ordinal);
+    }
+
+    private void DeleteRememberMeCookie()
+    {
+        var rememberMe = Options.RememberMe;
+        if (rememberMe == null)
+        {
+            return;
+        }
+
+        var cookieOptions = BuildCookieOptions(rememberMe);
+        Response.Cookies.Delete(rememberMe.CookieName, cookieOptions);
+    }
+
+    private CookieOptions BuildCookieOptions(RememberMeOptions rememberMe) => new()
+    {
+        HttpOnly = true,
+        Secure = rememberMe.SecurePolicy switch
+        {
+            CookieSecurePolicy.Always => true,
+            CookieSecurePolicy.SameAsRequest => Request.IsHttps,
+            _ => false
+        },
+        SameSite = rememberMe.SameSite,
+        Path = rememberMe.Path,
+        Domain = rememberMe.Domain,
+        Expires = DateTimeOffset.UtcNow.Add(rememberMe.Duration),
+        IsEssential = true
+    };
+
     private string BuildRateLimitKey(string username)
     {
         var parts = new List<string>();
@@ -353,5 +574,11 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
     {
         public static ValidationResult Success(BasicAuthenticationUser? user = null) => new(true, null, user);
         public static ValidationResult Failed(string reason) => new(false, reason);
+    }
+
+    private record RevalidationResult(bool IsValid, string? FailureReason, AuthenticationTicket? Ticket)
+    {
+        public static RevalidationResult Success(AuthenticationTicket ticket) => new(true, null, ticket);
+        public static RevalidationResult Failed(string reason) => new(false, reason, null);
     }
 }
