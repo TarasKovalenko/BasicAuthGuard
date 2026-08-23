@@ -64,7 +64,7 @@ var summaries = new[]
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }))
     .WithName("HealthCheck");
 
-app.MapGet("/logout", async (HttpContext context) =>
+app.MapPost("/logout", async (HttpContext context) =>
 {
     await context.SignOutAsync(BasicAuthenticationDefaults.AuthenticationScheme);
     return Results.Ok("Signed out - remember-me cookie cleared");

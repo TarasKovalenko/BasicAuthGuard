@@ -176,7 +176,17 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         var principal = await BuildPrincipalAsync(username, validationResult.User);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
 
-        IssueRememberMeCookie(ticket);
+        // Browsers resend Authorization on every request, so this branch runs on every
+        // request for the life of the session. Re-issuing unconditionally would append a
+        // Set-Cookie every time and slide the absolute expiry forward forever even though
+        // SlidingExpiration=false is documented as "not re-issued". Only skip re-issuing
+        // when a still-valid cookie for this same identity is already present; a fresh
+        // login (no cookie, a different identity, or an unusable cookie) always gets one.
+        if (Options.RememberMe != null &&
+            (Options.RememberMe.SlidingExpiration || !HasValidRememberMeCookieForUser(username)))
+        {
+            IssueRememberMeCookie(ticket);
+        }
 
         _auditLogger.LogSuccess(Context, username, Scheme.Name);
 
@@ -372,11 +382,11 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             return AuthenticateResult.NoResult();
         }
 
-        var storedTicket = _ticketProtector!.Unprotect(cookieValue);
+        var storedTicket = _ticketProtector!.Unprotect(cookieValue, Scheme.Name);
         if (storedTicket == null)
         {
             DeleteRememberMeCookie();
-            _auditLogger.LogFailure(Context, null, "Invalid remember-me cookie", auditScheme);
+            _auditLogger.LogFailure(Context, null, "Unreadable remember-me cookie", auditScheme);
             return AuthenticateResult.NoResult();
         }
 
@@ -384,7 +394,7 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         if (string.IsNullOrEmpty(username))
         {
             DeleteRememberMeCookie();
-            _auditLogger.LogFailure(Context, null, "Invalid remember-me cookie", auditScheme);
+            _auditLogger.LogFailure(Context, null, "Remember-me cookie missing name claim", auditScheme);
             return AuthenticateResult.NoResult();
         }
 
@@ -468,10 +478,13 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             return RevalidationResult.Success(new AuthenticationTicket(principal, Scheme.Name));
         }
 
-        // No credentials configured at all: nothing to re-check against, so trust the
-        // stored claims (matches ValidateCredentialsAsync's final fallback being a failure
-        // only because a password re-check is required there; here there is none).
-        return RevalidationResult.Success(new AuthenticationTicket(storedTicket.Principal, Scheme.Name));
+        // No credentials configured at all: there is nothing to validate the stored
+        // claims against, so this must fail just like ValidateCredentialsAsync's
+        // identical fallback on the header path (see the final branch above,
+        // "No credentials configured"). Trusting the cookie here would let clearing
+        // every configured credential lock out header auth while every outstanding
+        // remember-me cookie kept working for up to 365 days.
+        return RevalidationResult.Failed("No credentials configured");
     }
 
     private void IssueRememberMeCookie(AuthenticationTicket ticket)
@@ -482,8 +495,34 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
             return;
         }
 
-        var value = _ticketProtector.Protect(ticket, rememberMe.Duration);
+        var value = _ticketProtector.Protect(ticket, rememberMe.Duration, Scheme.Name);
         Response.Cookies.Append(rememberMe.CookieName, value, BuildCookieOptions(rememberMe));
+    }
+
+    /// <summary>
+    /// Checks whether the request already carries a remember-me cookie that unprotects
+    /// successfully and names the same user as the one who just authenticated via the
+    /// header. Used to avoid re-issuing (and sliding the expiry of) a cookie that is
+    /// already valid for this identity.
+    /// </summary>
+    private bool HasValidRememberMeCookieForUser(string username)
+    {
+        var rememberMe = Options.RememberMe;
+        if (rememberMe == null || _ticketProtector == null)
+        {
+            return false;
+        }
+
+        if (!Request.Cookies.TryGetValue(rememberMe.CookieName, out var cookieValue) ||
+            string.IsNullOrEmpty(cookieValue))
+        {
+            return false;
+        }
+
+        var storedTicket = _ticketProtector.Unprotect(cookieValue, Scheme.Name);
+        var storedUsername = storedTicket?.Principal.FindFirst(ClaimTypes.Name)?.Value;
+
+        return storedTicket != null && string.Equals(storedUsername, username, StringComparison.Ordinal);
     }
 
     private void DeleteRememberMeCookie()
@@ -495,7 +534,6 @@ public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticat
         }
 
         var cookieOptions = BuildCookieOptions(rememberMe);
-        cookieOptions.Expires = null;
         Response.Cookies.Delete(rememberMe.CookieName, cookieOptions);
     }
 

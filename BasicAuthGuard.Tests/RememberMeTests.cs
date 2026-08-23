@@ -1,8 +1,9 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using AspNetCore.BasicAuthentication.Extensions;
+using AspNetCore.BasicAuthentication.Models;
 using AspNetCore.BasicAuthentication.Options;
 using AspNetCore.BasicAuthentication.Services;
 using Microsoft.AspNetCore.Authentication;
@@ -20,6 +21,8 @@ namespace AspNetCore.BasicAuthentication.Tests;
 
 public class RememberMeTests
 {
+    private const string Scheme = BasicAuthenticationDefaults.AuthenticationScheme;
+
     [Fact]
     public void WithRememberMe_ShouldEnableFeatureWithDefaults()
     {
@@ -102,8 +105,8 @@ public class RememberMeTests
         var ticket = CreateTicket("admin", "Admin");
 
         // Act
-        var value = protector.Protect(ticket, TimeSpan.FromMinutes(5));
-        var restored = protector.Unprotect(value);
+        var value = protector.Protect(ticket, TimeSpan.FromMinutes(5), Scheme);
+        var restored = protector.Unprotect(value, Scheme);
 
         // Assert
         restored.ShouldNotBeNull();
@@ -120,8 +123,8 @@ public class RememberMeTests
         var ticket = CreateTicket("admin", "Admin");
 
         // Act - a negative lifetime puts the expiry in the past
-        var value = protector.Protect(ticket, TimeSpan.FromMinutes(-5));
-        var restored = protector.Unprotect(value);
+        var value = protector.Protect(ticket, TimeSpan.FromMinutes(-5), Scheme);
+        var restored = protector.Unprotect(value, Scheme);
 
         // Assert
         restored.ShouldBeNull();
@@ -132,11 +135,11 @@ public class RememberMeTests
     {
         // Arrange
         var protector = new RememberMeTicketProtector(new EphemeralDataProtectionProvider());
-        var value = protector.Protect(CreateTicket("admin", "Admin"), TimeSpan.FromMinutes(5));
+        var value = protector.Protect(CreateTicket("admin", "Admin"), TimeSpan.FromMinutes(5), Scheme);
         var tampered = (value[0] == 'A' ? 'B' : 'A') + value.Substring(1);
 
         // Act
-        var restored = protector.Unprotect(tampered);
+        var restored = protector.Unprotect(tampered, Scheme);
 
         // Assert
         restored.ShouldBeNull();
@@ -148,10 +151,10 @@ public class RememberMeTests
         // Arrange
         var issuer = new RememberMeTicketProtector(new EphemeralDataProtectionProvider());
         var other = new RememberMeTicketProtector(new EphemeralDataProtectionProvider());
-        var value = issuer.Protect(CreateTicket("admin", "Admin"), TimeSpan.FromMinutes(5));
+        var value = issuer.Protect(CreateTicket("admin", "Admin"), TimeSpan.FromMinutes(5), Scheme);
 
         // Act
-        var restored = other.Unprotect(value);
+        var restored = other.Unprotect(value, Scheme);
 
         // Assert
         restored.ShouldBeNull();
@@ -166,7 +169,23 @@ public class RememberMeTests
         var protector = new RememberMeTicketProtector(new EphemeralDataProtectionProvider());
 
         // Act
-        var restored = protector.Unprotect(value);
+        var restored = protector.Unprotect(value, Scheme);
+
+        // Assert
+        restored.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Protector_ValueProtectedForDifferentScheme_ShouldReturnNull()
+    {
+        // Arrange - the same protector instance is shared across schemes when an app
+        // registers multiple BasicAuthGuard schemes. A cookie minted for "SchemeA" must
+        // not unprotect under "SchemeB", or SchemeB would trust SchemeA's claims outright.
+        var protector = new RememberMeTicketProtector(new EphemeralDataProtectionProvider());
+        var value = protector.Protect(CreateTicket("admin", "Admin"), TimeSpan.FromMinutes(5), "SchemeA");
+
+        // Act
+        var restored = protector.Unprotect(value, "SchemeB");
 
         // Assert
         restored.ShouldBeNull();
@@ -264,6 +283,28 @@ public class RememberMeTests
         // Act
         client.DefaultRequestHeaders.Authorization = null;
         client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        GetSetCookie(second, ".BasicAuthGuard.Remember").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task HeaderAuth_WithExistingValidCookie_ShouldNotReissueCookieWhenNotSliding()
+    {
+        // Arrange - browsers resend Authorization on every request, so once a cookie is
+        // present the header path keeps running too. Re-issuing on every such request
+        // would append a Set-Cookie every time and slide the absolute expiry forward
+        // forever even though SlidingExpiration=false is documented as "not re-issued".
+        using var host = await CreateHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("admin", "password123");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+
+        // Act - Authorization header still present alongside the already-issued cookie
         var second = await client.GetAsync("/secure");
 
         // Assert
@@ -375,6 +416,126 @@ public class RememberMeTests
             .GetRequiredService<IOptionsMonitor<BasicAuthenticationOptions>>()
             .Get(BasicAuthenticationDefaults.AuthenticationScheme);
         options.Users.First(u => u.Username == "user1").IsEnabled = false;
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        var setCookie = GetSetCookie(second, ".BasicAuthGuard.Remember");
+        setCookie.ShouldNotBeNull();
+        setCookie!.ShouldContain("expires=Thu, 01 Jan 1970", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task RemovedUser_ShouldRejectCookieAndClearIt()
+    {
+        // Arrange
+        using var host = await CreateMultiUserHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("user1", "pass1");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Remove the user entirely after the cookie was issued
+        var options = host.Services
+            .GetRequiredService<IOptionsMonitor<BasicAuthenticationOptions>>()
+            .Get(BasicAuthenticationDefaults.AuthenticationScheme);
+        var user1 = options.Users.First(u => u.Username == "user1");
+        options.Users.Remove(user1);
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        var setCookie = GetSetCookie(second, ".BasicAuthGuard.Remember");
+        setCookie.ShouldNotBeNull();
+        setCookie!.ShouldContain("expires=Thu, 01 Jan 1970", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task UsernameChangedAfterIssue_ShouldRejectCookieAndClearIt()
+    {
+        // Arrange - single-user configuration
+        using var host = await CreateHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("admin", "password123");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Change the configured single-user username after the cookie was issued
+        var options = host.Services
+            .GetRequiredService<IOptionsMonitor<BasicAuthenticationOptions>>()
+            .Get(BasicAuthenticationDefaults.AuthenticationScheme);
+        options.Username = "someoneelse";
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        var setCookie = GetSetCookie(second, ".BasicAuthGuard.Remember");
+        setCookie.ShouldNotBeNull();
+        setCookie!.ShouldContain("expires=Thu, 01 Jan 1970", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task NoCredentialsConfigured_ShouldRejectCookieAndClearIt()
+    {
+        // Arrange - covers the trailing fallback in RevalidateRememberMeAsync: no
+        // delegate, no events, no Users, and no Username configured. The header path
+        // fails with "No credentials configured" in this configuration (nothing to
+        // validate against); the cookie path must fail the same way instead of trusting
+        // whatever claims happen to be stored in an outstanding cookie.
+        using var host = await CreateHost(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("admin", "password123");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Clear all configured credentials after the cookie was issued
+        var options = host.Services
+            .GetRequiredService<IOptionsMonitor<BasicAuthenticationOptions>>()
+            .Get(BasicAuthenticationDefaults.AuthenticationScheme);
+        options.Username = null;
+        options.Password = null;
+
+        // Act
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", cookie);
+        var second = await client.GetAsync("/secure");
+
+        // Assert
+        second.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        var setCookie = GetSetCookie(second, ".BasicAuthGuard.Remember");
+        setCookie.ShouldNotBeNull();
+        setCookie!.ShouldContain("expires=Thu, 01 Jan 1970", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task ScheduleClosedAfterIssue_ShouldRejectCookieAndClearIt()
+    {
+        // Arrange - schedule starts open so the header login and cookie issuance succeed
+        using var host = await CreateScheduledUserHost();
+        var client = host.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = BasicHeader("user1", "pass1");
+        var first = await client.GetAsync("/secure");
+        var cookie = CookiePair(GetSetCookie(first, ".BasicAuthGuard.Remember")!);
+
+        // Close the access window after the cookie was issued
+        var options = host.Services
+            .GetRequiredService<IOptionsMonitor<BasicAuthenticationOptions>>()
+            .Get(BasicAuthenticationDefaults.AuthenticationScheme);
+        var today = DateTime.UtcNow.DayOfWeek;
+        var otherDays = Enum.GetValues<DayOfWeek>().Where(d => d != today).ToList();
+        options.Users.First(u => u.Username == "user1").Schedule!.AllowedDays = otherDays;
 
         // Act
         client.DefaultRequestHeaders.Authorization = null;
@@ -512,6 +673,41 @@ public class RememberMeTests
                         endpoints.MapGet("/roles", (HttpContext ctx) =>
                                 string.Join(",", ctx.User.FindAll(System.Security.Claims.ClaimTypes.Role)
                                     .Select(c => c.Value)))
+                            .RequireBasicAuth();
+                    });
+                });
+            })
+            .Build();
+
+        await host.StartAsync();
+        return host;
+    }
+
+    private static async Task<IHost> CreateScheduledUserHost()
+    {
+        var host = new HostBuilder()
+            .ConfigureWebHost(webBuilder =>
+            {
+                webBuilder.UseTestServer();
+                webBuilder.ConfigureServices(services =>
+                {
+                    services.AddBasicAuthGuard(options =>
+                    {
+                        options.AddUserWithSchedule("user1", "pass1", new AccessSchedule());
+                        options.WithRememberMe(remember => remember.SecurePolicy = CookieSecurePolicy.None);
+                    });
+                    services.AddBasicAuthGuardPolicy();
+                    services.AddAuthorization();
+                    services.AddRouting();
+                });
+                webBuilder.Configure(app =>
+                {
+                    app.UseRouting();
+                    app.UseAuthentication();
+                    app.UseAuthorization();
+                    app.UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapGet("/secure", (HttpContext ctx) => ctx.User.Identity!.Name)
                             .RequireBasicAuth();
                     });
                 });

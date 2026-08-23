@@ -1,7 +1,6 @@
 using AspNetCore.BasicAuthentication.RateLimiting;
 using AspNetCore.BasicAuthentication.Services;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
