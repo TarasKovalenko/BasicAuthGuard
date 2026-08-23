@@ -18,6 +18,7 @@ Zero-config Basic Authentication for ASP.NET Core. Inline credentials, per-endpo
 - 🔒 **Password Hashing** - Support for SHA256, SHA512, and BCrypt
 - 📅 **Access Schedules** - Time-based access restrictions
 - 🎪 **Event Hooks** - Custom logic for authentication lifecycle
+- 🍪 **Remember Me** - Persistent encrypted cookie so the native prompt doesn't reappear every session
 
 ## Terms of use
 
@@ -537,19 +538,49 @@ Behaviour:
   Otherwise, the single configured `Username` must still match.
 - The cookie is always `HttpOnly` and is `Secure` by default. It is encrypted and
   signed with ASP.NET Core Data Protection, and the expiry is enforced server-side.
+- If no credentials are configured at all (no delegate, no events, no `AddUser`, no
+  `Username`), the cookie is rejected and cleared — the same way header auth fails with
+  "No credentials configured". Outstanding cookies never outlive the configuration that
+  issued them.
+- The cookie is issued to every client that authenticates with a `Authorization: Basic`
+  header, including non-browser API clients that ignore `Set-Cookie`. Because requests
+  can now be authenticated by a cookie, treat state-changing endpoints as CSRF-exposed:
+  keep `SameSite` at `Lax` (the default) or `Strict`, and use `POST` for anything that
+  mutates state.
+- `UrlBasicAuthenticationMiddleware` (`AddBasicAuthGuard` on `IApplicationBuilder` /
+  `UseBasicAuthGuard`) and the per-endpoint `RequireBasicAuth(username, password, ...)`
+  filter are header-only by design — they do not read or issue the remember-me cookie.
+  Paths guarded only by those still prompt on every request even when `RememberMe` is
+  enabled on the main scheme. Use the scheme-based `RequireBasicAuth()` policy overload
+  for endpoints that should participate in remember-me.
+
+**Multi-scheme apps:** if you call `AddBasicAuthGuard(schemeName, configure)` more than
+once to register multiple BasicAuthGuard schemes, give each scheme's `RememberMe` a
+distinct `CookieName`. The encryption purpose is already scoped per scheme, so a cookie
+from one scheme cannot be decrypted under another, but sharing a cookie name still means
+each scheme's cookie overwrites the other's in the browser's cookie jar.
 
 ### Signing out
 
 ```csharp
-app.MapGet("/logout", async (HttpContext context) =>
+app.MapPost("/logout", async (HttpContext context) =>
 {
     await context.SignOutAsync(BasicAuthenticationDefaults.AuthenticationScheme);
     return Results.Ok("Signed out");
 });
 ```
 
+Use `MapPost`, not `MapGet` — sign-out changes state, and a `GET` endpoint can be
+triggered by any third-party page (e.g. `<img src="…/logout">`) without the user's
+intent.
+
 This clears the cookie. The browser may still hold cached Basic credentials for the
 current session — that part is browser-controlled and closing the browser clears it.
+
+Sign-out only clears the cookie on the browser that called it. There is no server-side
+revocation list, so a cookie already issued to another device stays valid until it
+expires. If you need to invalidate every outstanding cookie at once, revoke the Data
+Protection keyring or change the scheme name.
 
 ### Persist your Data Protection keys
 
@@ -749,6 +780,7 @@ builder.Services.AddBasicAuthGuard(options =>
 | `RateLimiting` | `RateLimitOptions?` | `null` | Rate limiting config |
 | `IpWhitelist` | `IpWhitelistOptions?` | `null` | IP whitelist config |
 | `AuditLog` | `AuditLogOptions?` | `null` | Audit logging config |
+| `RememberMe` | `RememberMeOptions?` | `null` | Remember-me cookie config |
 | `ValidateCredentialsAsync` | `Func<...>?` | `null` | Custom validation delegate |
 | `GetAdditionalClaimsAsync` | `Func<...>?` | `null` | Additional claims provider |
 | `Events` | `BasicAuthenticationEvents` | `new()` | Event handlers |
