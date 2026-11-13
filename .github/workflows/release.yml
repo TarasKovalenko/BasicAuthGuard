@@ -29,14 +29,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The library multi-targets net8.0/net9.0/net10.0, so every runtime has to be
-      # present for the test run; the 10.0.x SDK builds all three.
+      # The library multi-targets net10.0/net11.0, so both runtimes have to be
+      # present for the test run; the 11.0.x SDK builds both.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
-            8.0.x
-            9.0.x
             10.0.x
+            11.0.x
 
       # INPUT_VERSION goes through the environment, not a ${{ }} interpolation inside the
       # script: interpolation is substituted before the shell runs, so the validation
